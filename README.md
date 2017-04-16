@@ -131,11 +131,6 @@ context map states.
     {:status :access-denied
      :response {:message "..."}}))
 
-(fn security-check [{req :request}]
-  (when-not (authorized? req ...)
-    {:status :access-denied
-     :response {:body {:message "..."}}}))
-
 (fn format-response [{req :request resp :response}]
   ...
   {:response {:body  (json-or-other-format (:body resp))}})
