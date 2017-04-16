@@ -110,16 +110,16 @@ and we want to respond with 403 status).
 There are different ways to implement it:
 
 * return some magic key {:status :stop}, which will be interpreted by 
-  pipeline manager interception
-* (pedestal way) or pass rest of pipline into function as data and allow function modify
-  pipline - for example make it empty
+  pipeline manager as alternative path
+* (pedestal way) allow function to modify
+  rest of pipline
 
 Let's consider first, more static approach
 and allow pipline functions subscribe to different
 context map states.
 
 
-```
+```clj
 (def pipline
   [[verify-jwt]
    [security-check {cfg}]
