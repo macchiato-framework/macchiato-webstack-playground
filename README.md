@@ -4,191 +4,155 @@ A Clojure library designed to provide "universal"
 functions interface, which is composable by "meta"-data
 into pipelines and workflows. 
 
-Inspired by pedestal, prizmatic libraries & onyx.
+Inspired by pedestal, prismatic libraries & onyx.
 
 
-## Monivation
+## Motivation
 
 Some pieces of code could be expressed 
-as a pipeline (for example middleware in ring etc) or in more 
-general - a workflow
+as a pipeline, for example processing a HTTP request and producing HTTP response: 
 
 
 ```
-->[fn]-event->[fn]-event->[fn]
+ request -> [fn] -event-> [fn] -event-> [fn] -> response
 
 ```
 
-Ring uses functions decoration to build pipeline, but it has some drawbacks
-- i.e. async interfaces, introspectoin, stacktraces etc
+Ring uses functions decoration to build request processing stack,
+but it has some drawbacks
 
-Let say we have defined interface for function:
+* async interfaces
+* introspectoin
+* stacktraces
 
-function passed only one parameter and it's hash-map - universal argument
-function produce hash-map, wich will be merged into original argument and
-passed downstream.
+Pedestal is based on interceptor's stack, 
+which is dynamic and executed by extrnal executor. 
+This is better and gives us control point 
+between interceptors. Pedestal also introduce 
+*context map* as context for all interceptors.
 
-```
-{:param ...} => f -> {:update ...} => {:param ... :update ... :metadata ...}
-```
 
-This functions could be composed into pipeline:
+Onyx gives us an idea separating functions from workflow 
+definitions by data dsl. 
 
-```
-input => f =event=> f =event=> output
+Let's combine all together:
 
-```
-
-Pipeline or in general workflow described by data. 
-Each function has unique key and some configuration data, wich could modify
-function behavior:
-
+We build processing stack from functions with uniform
+interface - functions of one argument (context map), which 
+returins hash-map, interpreted as patch to original context map.
 
 ```clj
-(defmethod unifn/*fn
-   :my/step1
-   [{cfg :my.step1/config ....}]
-   ...)
+(defn pipeline-element 
+   [ctx-map]
+   {:some-context value})
+```
 
-(defmethod unifn/*fn
-   :my/step2
-   [{cfg :my.step2/config ....}]
-   ...)
+Such functions could be composed into pipeline:
+
+```clj
+(def pipeline
+   [pileline-fn-1
+    pileline-fn-2
+    pileline-fn-3])
+```
+
+And external executor could reduce this pipeline aka:
+
+```clj
+
+(reduce 
+  (fn [ctx-map item]
+    (let [result (item ctx-map)]
+       (deep-merge ctx-map result))) 
+  {:request http-request-map} 
+  pipeline)
+
+```
+
+We could introduce configuration data into pipeline definition:
+
+```clj
+(def pipeline
+  [[fn-1 {:some "config"}]
+   [fn-2 {:another "config"}]
+   ....])
+
+;; and interpretation
+
+(reduce 
+  (fn [ctx-map [f config]]
+    (let [result (f (merge ctx-map config))] ;; merge config into ctx-map 
+       (deep-merge ctx-map result))) 
+  {:request http-request-map} 
+  pipeline)
+
+```
+
+By merging config map into only argument, 
+we allows upstream pipeline functions to inject
+config into context map for downstream funcftions,
+making configuration more dynamic.
+
+For example some dynamic routes could 
+be fetched from database and injected into 
+context map before dispatching function.
+
+```clj
+(def pipeline
+   [[routes-from-db]
+    [routing]])
+```
+
+Sometimes you want to stop
+normal pipeline processing (for example security check returns unauthorized
+and we want to respond with 403 status).
+
+There are different ways to implement it:
+
+* return some magic key {:status :stop}, which will be interpreted by 
+  pipeline manager interception
+* (pedestal way) or pass rest of pipline into function as data and allow function modify
+  pipline - for example make it empty
+
+Let's consider first, more static approach
+and allow pipline functions subscribe to different
+context map states.
+
+
+```
+(def pipline
+  [[verify-jwt]
+   [security-check {cfg}]
+   [handler]
+   [format-response {:status [:access-denied :succes]}]])
    
-(defaction ::my/pipe
-  {::u/fn [{::u/fn :my/step1
-            :my.step1/config {...}}
-           {::u/fn :my/step2
-            :my.step2/config {...}}]})
-```
+(fn security-check [{req :request}]
+  (when-not (authorized? req ...)
+    {:status :access-denied
+     :response {:message "..."}}))
 
+(fn security-check [{req :request}]
+  (when-not (authorized? req ...)
+    {:status :access-denied
+     :response {:body {:message "..."}}}))
 
-Each message/argument has some meta attributes
-
-```clj
-::u/id - configured action id
-::u/type = equals to ::u/fn  - type of event
-::u/ts - timestamp
-
-arg could have spcial keys
-
-::u/tracers [tracer-fn]
-
-{ tracer-fn [ev arg] }
-
-```
-
-We use one function interface
-
-function get one hash-map argument with all context 
-and returns hash-map which will be merged into original argument and passed
-downstream
-
-``` clj
-(defmethod unifn/ufn 
-  :my/key
-  [arg] {:patch "patch"})
-
-(unifn/apply {:unifn/fn :my/key
-              :unifn/id "some-id"
-              :unifn/event :module.module.action
-              :some-config {}} 
-             {:a 1}) 
-
-;;=> 
-   {:a 1 :patch "patch" 
-    :unifn/event module.module.action or fn/key by default
-    :unifn/id "some-id"
-    
-    :unifn/pipe ? like in pedestal
-
-    :my/key {:some-config {}}}
-
-(unifn/apply [{:unifn/fn :uniq/fn} {:unifn/fn :other/fn}] {:a 1})
-
-(unifn/apply [:uniq/fn :other/fn] {:a 1})
-
-```
-
-->[fn]-event->[fn]-event->[fn]
-
-
-## TODO
-
-* interface one or two attributes?
-* tracing
-* naming {:id :event :fn}
-* pipeline interface
-* subscriptions
-
-
-## Usage
-
-
-To definy unifunction you have to
-implement mulitmethod with your key `:my/transform`:
-
-```
-
-(defmethod unifn/*apply-fn :my/transform
-  [f arg]
-  (assoc arg :var "value"))
-```
-
-
-You could call your function by `(unifn/apply f arg)`
-
-
-```
-(unifn/apply {:unifn/fn :my/transform} {}) 
-=>  {:var "value"}
-
-```
-
-You could build pipeline of functions using :unifn/fn :unifn/pipe
-
-
-```
-{:unifn/fn   :unifn/pipe
- :unifn/id   "mypipline"
- :unifn/pipe [{:unifn/id "some id"
-               :unifn/fn :test/transform}
-              {:unifn/fn :unifn/fork
-               :action   :test/interceptor
-               :branch   [{}...]}
-              {:unifn/fn :test/response}]}
-```
-
-
-```clj
-{::u/id :my.rest.api
- ::u/tracer  fn 
- ::u/fn [{::u/fn :http/in ::u/tags #{:http.request.start} ::u/to :http/request}
-         {::u/fn ::u/assoc-in [:metadata] ::u/value #'metadata/get-metadata'}
-         {::u/fn :env/env ::u/to [:env]}
-         {::u/fn :pg/connection :pg/from [:env]}
-         {::u/fn :http/router :routes ...}
-         {::u/fn :http/debug} ;; stops pipe here and return info
-         {::u/filter {:u/stats :error} ...}
-         {::u/fn :http/format :formats ...}
-         {::u/fn :http/trace-request} ;; return stack for frontend
-         {::u/fn :http/out 
-          ::u/tags #{:http.request.end} 
-          ::u/from :http/request
-          ::u/subs [...]}]}
-```
-
-
-To stop/intercept pipeline you function should return :unifn/status :error or :stop:
-
-
-```clj
-(defmethod unifn/ufn 
-  :test/interceptor
-  [f arg]
-  (when ...
-    {:response {:interecepted true} :unifn/status :stop}))
-```
+(fn format-response [{req :request resp :response}]
+  ...
+  {:response {:body  (json-or-other-format (:body resp))}})
+ 
+;; pipeline interpretation
+  
+(reduce 
+  (fn [ctx-map [f config]]
+    (if (or (nil? (:status ctx-map)) 
+            (subscribed? config (:status ctx-map)))
+       (f ctx-map)
+       ctx-map ;; skip))
+  {:request http-request-map} 
+  pipeline)
+  
+   
+````
 
 ## License
 
