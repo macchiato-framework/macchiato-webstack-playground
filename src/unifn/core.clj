@@ -1,4 +1,4 @@
-(ns unifn
+(ns unifn.core
   (:require [clojure.spec :as s]
             [clojure.stacktrace :as stacktrace]))
 
@@ -14,56 +14,57 @@
                       (assoc acc k (deep-merge av v))
                       (assoc acc k v))))))))
 
-(defmulti *fn (fn [arg] (:unifn/fn arg)))
+(defmulti *fn (fn [arg] (::fn arg)))
 
-(defmethod *fn :unifn/identity
+(defmethod *fn ::identity
   [arg] {})
 
 (defmethod *fn :default
   [arg]
-  {:unifn/status :error
-   :unifn/message (str "Could not resolve " (:unifn/fn arg))})
+  {::status :error
+   ::message (str "Could not resolve " (::fn arg))})
 
 (declare *apply)
 
-(defn *apply-impl [{st :unifn/status inter :unifn/intercept f-name :unifn/fn tracers :unifn/tracers :as arg}]
+(defn *apply-impl [{st ::status inter ::intercept f-name ::fn tracers ::tracers :as arg}]
   (if (and (not (= inter :all))
            (contains? #{:error :stop} st))
     arg
-    (let [arg (dissoc arg :unifn/intercept)]
-      (do
+    (let [arg (dissoc arg ::intercept) ]
        (when tracers
-         (let [trace-ev {:unifn/fn f-name :unifn/phase :enter}]
+         (let [trace-ev {::fn f-name ::phase :enter}]
            (doseq [t tracers] (*apply t {:event trace-ev :arg arg}))))
 
        (if-let [problems (and (s/get-spec f-name) (s/explain-data f-name arg))]
-         (let [ev {:unifn/status :error
-                   :unifn/fn f-name
-                   :unifn/problems (:clojure.spec/problems problems)}]
+         (let [ev {::status :error
+                   ::fn  f-name
+                   ::message (with-out-str (s/explain f-name arg))
+                   ::problems (::s/problems problems)}]
            (when tracers
              (doseq [t tracers] (*apply t {:event ev :arg arg})))
            (merge arg ev))
-         (let [patch (if (:unifn/safe? arg)
+         (let [patch (if (::safe? arg)
                        (try (*fn arg)
                             (catch Exception e
-                              {:unifn/status :error
-                               :unifn/stacktrace (with-out-str (stacktrace/print-stack-trace e))}))
+                              {::status :error
+                               ::message (with-out-str (stacktrace/print-stack-trace e))}))
                        (*fn arg))
-               patch (cond (map? patch) patch (nil? patch) {} :else {:unifn/value patch})
+               patch (cond (map? patch) patch (nil? patch) {} :else {::value patch})
                res (deep-merge arg patch)]
            (when tracers
-             (let [trace-ev (merge arg {:unifn/phase :leave})]
+             (let [trace-ev (merge arg {::phase :leave})]
                (doseq [t tracers] (*apply t {:event patch :arg res}))))
-           res))))))
+           res)))))
 
 (defn *apply [f arg]
   ;; validate f
   (cond
-    (keyword? f) (*apply-impl (assoc arg :unifn/fn f))
+    (string? f)  (*apply-impl (assoc arg ::fn (keyword f)))
+    (keyword? f) (*apply-impl (assoc arg ::fn f))
     (map? f)     (*apply-impl (deep-merge arg f))
     (vector? f) (loop [[f & fs] f, arg arg]
                   (cond
                     (nil? f) arg
                     :else (recur fs (*apply f arg))))
-    :else (throw (Exception. "ups"))))
-
+    (var? f) (*apply (var-get f) arg)
+    :else (throw (Exception. (str "I don't know how to apply " (pr-str f))))))

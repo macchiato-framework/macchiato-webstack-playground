@@ -1,22 +1,24 @@
-(ns unifn-test
-  (:require [unifn :as u]
+(ns unifn.core-test
+  (:require [unifn.core :as u]
             [matcho.core :as matcho]
             [clojure.test :refer :all]
             [clojure.spec :as s]))
-
 
 (defmethod u/*fn :test/transform
   [arg]
   {:var "value"})
 
+
 (defmethod u/*fn :test/response
   [arg]
   {:response  {:some "response"}})
 
+
 (defmethod u/*fn :test/interceptor
   [arg]
   (when (:intercept arg)
-    {:response {:interecepted true} ::u/status :stop}))
+    {:response {:interecepted true}
+     ::u/status :stop}))
 
 (defmethod u/*fn :test/catch
   [arg]
@@ -50,36 +52,37 @@
   (matcho/match
    (u/*apply {::u/fn :test/throwing} {:some "payload" ::u/safe? true})
    {::u/status :error
-    ::u/stacktrace string?})
+    ::u/message string?})
 
 
   (matcho/match
    (u/*apply [{::u/fn :test/transform}
-                {::u/fn :test/interceptor}
-                {::u/fn :test/response}]
-               {:request {}})
+              {::u/fn :test/interceptor}
+              {::u/fn :test/response}]
+             {:request {}})
 
    {:response {:some "response"} :var "value" })
 
-  (matcho/match 
+  (matcho/match
    (u/*apply [{::u/fn :test/transform}
-                {::u/fn :test/interceptor}
-                {::u/fn :test/response}]
-                 {:request {} :intercept true})
-   {:response {:interecepted true}}) 
+              {::u/fn :test/interceptor}
+              {::u/fn :test/response}]
+             {:request {} :intercept true})
+   {:response {:interecepted true}})
 
-  (matcho/match 
+  (matcho/match
    (u/*apply [{::u/fn :test/interceptor}
               {::u/fn :test/response}
               {::u/fn :test/catch ::u/intercept :all}
               {::u/fn :test/response}]
-              {:intercept true})
+             {:intercept true})
    {:response {:interecepted true}
     :catched true})
 
   (matcho/match
    (u/*apply {::u/fn :test/specified} {})
-   {::u/status :error})
+   {::u/status :error
+    ::u/message string?})
 
   (matcho/match
    (u/*apply {::u/fn :test/specified} {:test/specific-key 1})
